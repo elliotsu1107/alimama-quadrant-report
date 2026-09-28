@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# local runtime created by setup.bat
+.venv/
+venv/
+
+# generated reports and exported data — never commit store data
+reports/
+outputs/
+data/
+*.html
+!docs/**/*.html
+
+# temp / office lock files
+~$*
+*.tmp
+.DS_Store
+
+# editors
+.vscode/
+.idea/
