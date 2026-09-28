@@ -126,7 +126,6 @@ python weekly_report.py --plans 计划报表.csv --items 商品报表.csv --summ
 | `sample_wanxiangtai.xlsx` | 示例数据，用来试跑 |
 | `setup.bat` | 一键建环境 |
 | `batch.bat` / `single.bat` / `start.bat` | 批量 / 单店 / 通用分析 三个入口 |
-| `docs/使用说明.txt` | 给同事看的操作说明 |
 
 **常用参数**（命令行方式）：
 
