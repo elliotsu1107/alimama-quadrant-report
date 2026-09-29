@@ -20,7 +20,7 @@ except Exception:
 HERE = os.path.dirname(os.path.abspath(__file__))
 EXTS = (".csv", ".xlsx", ".xls")
 
-VERSION = "0.1.1"
+VERSION = "0.1.2"
 
 _spec = importlib.util.spec_from_file_location("br", os.path.join(HERE, "batch_report.py"))
 br = importlib.util.module_from_spec(_spec)
@@ -88,6 +88,24 @@ def pick_shop():
     return clean(ask("  店铺名称 > "))
 
 
+def pick_margin():
+    print("\n店铺整体毛利率（选填，0-1 之间的小数，如 0.35 表示 35%）")
+    print("用于算「保本 ROI = 1 ÷ 毛利率」作为 ROI 分界线下限：低于保本线即必亏，")
+    print("会优先进「建议调整」。不填则沿用大盘 ROI 作为分界线（历史默认行为）。")
+    v = clean(ask("  毛利率 > "))
+    if not v:
+        return 0.0
+    try:
+        m = float(v)
+    except ValueError:
+        print("    无法识别为数字，已忽略，沿用大盘线。")
+        return 0.0
+    if not (0 < m < 1):
+        print("    毛利率应在 0-1 之间（如 0.35），已忽略，沿用大盘线。")
+        return 0.0
+    return m
+
+
 def pick_tag(period):
     print("\n报告类型：[1] 周报  [2] 日报（直接回车按周期自动判断）")
     s = clean(ask("  选择 > "))
@@ -116,6 +134,7 @@ def main():
 
     period = pick_period()
     shop = pick_shop()
+    margin = pick_margin()
     tag = pick_tag(period)
 
     # 输出目录：第一个来源是文件夹就用它，否则用文件所在目录
@@ -124,9 +143,11 @@ def main():
     out_dir = os.path.join(base, "reports")
 
     print("\n" + "-" * 58)
-    print("来源 %d 个 ｜ 周期「%s」｜ 类型 %s%s"
+    print("来源 %d 个 ｜ 周期「%s」｜ 类型 %s%s%s"
           % (len(paths), period or "(未填)", tag,
-             " ｜ 店铺「%s」" % shop if shop else ""))
+             " ｜ 店铺「%s」" % shop if shop else "",
+             " ｜ 保本ROI %.2f（毛利率%.0f%%）" % (1 / margin, margin * 100)
+             if margin else ""))
     print("输出目录：%s" % out_dir)
     print("-" * 58)
     print("\n正在生成报告，请稍候…\n")
@@ -136,6 +157,8 @@ def main():
                ["--period", period, "--outdir", out_dir, "--suffix", tag]
     if shop:
         sys.argv += ["--shop", shop]
+    if margin:
+        sys.argv += ["--margin", str(margin)]
     try:
         rc = br.main()
     except SystemExit as e:

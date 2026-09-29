@@ -97,6 +97,7 @@ def load_rows(path):
         "u": arr("uv"), "q": arr("qk"), "p": arr("sp"),
         "nr": arr("newRate"), "nc": arr("newC"), "b": arr("byr"),
         "ca": arr("cart"), "f": arr("fav"),
+        "ni": arr("natImp"), "ng": arr("natGmv"),
     }
 
     rows = []
@@ -116,6 +117,11 @@ def load_rows(path):
             r["cpc"] = r["c"] / r["ck"]
         if not r["cvr"] and r["ck"]:
             r["cvr"] = r["o"] / r["ck"]
+        if not r.get("ni"):
+            r["ni"] = 0.0
+        if not r.get("ng"):
+            r["ng"] = 0.0
+        r["nat_ratio"] = (r["ni"] / r["im"]) if r["im"] else 0.0
         rows.append(r)
     return rows
 
@@ -646,29 +652,39 @@ def render(ctx, out_path):
                  '<th>成交金额</th><th>ROI</th><th>潜客占比</th><th>新客占比</th>'
                  '<th>展现</th><th>点击</th><th>CTR</th><th>CPC</th><th>CVR</th>'
                  '<th>成交笔数</th><th>加购</th><th>收藏</th>'
-                 '</tr></thead><tbody>')
+                 + ('<th>自然曝光</th><th>自然溢出</th>' if ctx["has_nat"] else '')
+                 + '</tr></thead><tbody>')
         for t in ctx["top_items"]:
             nm = t["name"] if len(t["name"]) <= 26 else t["name"][:25] + "…"
             tc_ = TIERS.get(t["tier"], {"c": "#9ca3af"})["c"]
             rcls = "good" if t["tier"] in ("爆款", "潜力") else "bad"
-            h.append('<tr>'
-                     '<td>%d</td><td class="nm" style="color:#475569">%s</td>'
-                     '<td class="nm" title="%s">%s</td>'
-                     '<td><span class="qtag" style="background:%s">%s</span></td>'
-                     '<td>¥%s</td><td>%.1f%%</td><td>¥%s</td>'
-                     '<td class="%s"><b>%.2f</b></td><td>%.1f%%</td><td>%.1f%%</td>'
-                     '<td>%s</td><td>%s</td><td>%.2f%%</td><td>%.2f</td><td>%.2f%%</td>'
-                     '<td>%s</td><td>%s</td><td>%s</td></tr>'
-                     % (t["rank"], esc(t["id"] or "—"),
-                        esc(t["name"]), esc(nm), tc_, t["tier"] or "—",
-                        fmt_money(t["c"]), t["share"] * 100, fmt_money(t["g"]),
-                        rcls, t["r"], t["p"] * 100, t["nr"] * 100,
-                        fmt_money(t["im"]), fmt_money(t["ck"]),
-                        t["ctr"] * 100, t["cpc"], t["cvr"] * 100,
-                        fmt_money(t["o"]), fmt_money(t["ca"]), fmt_money(t["f"])))
+            row = ('<tr>'
+                   '<td>%d</td><td class="nm" style="color:#475569">%s</td>'
+                   '<td class="nm" title="%s">%s</td>'
+                   '<td><span class="qtag" style="background:%s">%s</span></td>'
+                   '<td>¥%s</td><td>%.1f%%</td><td>¥%s</td>'
+                   '<td class="%s"><b>%.2f</b></td><td>%.1f%%</td><td>%.1f%%</td>'
+                   '<td>%s</td><td>%s</td><td>%.2f%%</td><td>%.2f</td><td>%.2f%%</td>'
+                   '<td>%s</td><td>%s</td><td>%s</td>'
+                   % (t["rank"], esc(t["id"] or "—"),
+                      esc(t["name"]), esc(nm), tc_, t["tier"] or "—",
+                      fmt_money(t["c"]), t["share"] * 100, fmt_money(t["g"]),
+                      rcls, t["r"], t["p"] * 100, t["nr"] * 100,
+                      fmt_money(t["im"]), fmt_money(t["ck"]),
+                      t["ctr"] * 100, t["cpc"], t["cvr"] * 100,
+                      fmt_money(t["o"]), fmt_money(t["ca"]), fmt_money(t["f"])))
+            if ctx["has_nat"]:
+                row += '<td>%s</td><td>%.1f%%</td>' % (
+                    fmt_money(t["ni"]), t["nat_ratio"] * 100)
+            row += '</tr>'
+            h.append(row)
         h.append('</tbody></table></div>')
         h.append('<div class="note">花费占比 = 该商品花费 ÷ 商品级报表总花费；'
                  'ROI 标红表示该商品低于大盘分界线。</div>')
+        if ctx["has_nat"]:
+            h.append('<div class="note">自然曝光 = 报表「自然流量曝光量」；自然溢出 = 自然曝光 ÷ 付费展现量，'
+                     '反映付费投放带来的自然流量外溢（品牌 / 搜索溢出）。该指标仅作参考，'
+                     '<b>不参与四象限判定</b>。</div>')
         h.append("</div>")
 
     # 商品结构与分层（店铺整体一览）
@@ -711,9 +727,13 @@ def render(ctx, out_path):
                  % (k, q["c"], q["c"], q["n"], q["cond"], v["n"], fmt_money(v["c"]),
                     cs * 100, gs * 100, v["roi"], v["sp"] * 100, q["act"]))
     h.append("</div>")
-    h.append('<div class="note">判定口径：ROI 分界 %.2f（大盘）｜潜客占比分界 %.1f%%（大盘）｜'
-             '花费 &lt; %.0f 元或访问人数 &lt; %.0f 记为「样本不足」不参与判定。</div>'
-             % (roi_thr, sp_thr * 100, ctx["min_cost"], ctx["min_uv"]))
+    be_txt = ""
+    if ctx.get("be_applied"):
+        be_txt = "（取 max(基准 %.2f, 保本 %.2f)）" % (ctx["base_thr"], ctx["be_roi"])
+    h.append('<div class="note">判定口径：ROI 分界 %.2f%s｜潜客占比分界 %.1f%%（大盘）｜'
+             '花费 &lt; %.0f 元或访问人数 &lt; %.0f 记为「样本不足」不参与判定。'
+             '四象限仅依据 ROI×潜客占比，未混入自然流量曝光量。</div>'
+             % (roi_thr, be_txt, sp_thr * 100, ctx["min_cost"], ctx["min_uv"]))
 
     # 散点
     h.append("<h2>计划四象限散点</h2>")
@@ -800,6 +820,23 @@ def build(plans, items, args):
 
     roi_thr = args.roi_thr if args.roi_thr else (tg / tc if tc else 0)
     sp_thr = args.sp_thr if args.sp_thr is not None else (tq / tu if tu else 0)
+
+    # 保本 ROI 上限（可选）：若给出店铺整体毛利率 margin(0-1)，则
+    # 保本ROI = 1/margin，ROI 分界线取 max(保本ROI, 大盘ROI)。
+    # 仅一个店铺级输入，不需要逐商品毛利率；不填则沿用大盘线（历史行为）。
+    be_roi = 0.0
+    be_applied = False
+    base_thr = roi_thr
+    margin = getattr(args, "margin", 0)
+    if margin and 0 < margin < 1:
+        be_roi = 1.0 / margin
+        if be_roi > roi_thr:
+            roi_thr = be_roi
+        be_applied = True
+
+    # 自然流量曝光量是否存在（部分导出版本没有该列）
+    has_nat = any((r.get("ni") or 0) > 0 for r in plans) or \
+        any((r.get("ni") or 0) > 0 for r in items)
 
     for r in plans:
         r["qd"] = classify(r, roi_thr, sp_thr, args.min_cost, args.min_uv)
@@ -918,6 +955,8 @@ def build(plans, items, args):
             "im": it["im"], "ck": it["ck"], "ctr": it["ctr"], "cpc": it["cpc"],
             "cvr": it["cvr"], "o": it["o"], "u": it["u"], "nr": it["nr"],
             "ca": it["ca"], "f": it["f"], "b": it["b"],
+            "ni": it.get("ni", 0), "ng": it.get("ng", 0),
+            "nat_ratio": it.get("nat_ratio", 0),
             "share": it["c"] / ic_all if ic_all else 0,
         })
 
@@ -925,9 +964,9 @@ def build(plans, items, args):
         return {k: (round(r[k], 4) if isinstance(r[k], float) else r[k]) for k in keys}
 
     pkeys = ["n", "s", "c", "g", "r", "im", "ck", "ctr", "cpc", "cvr", "o",
-             "u", "q", "p", "nr", "b", "ca", "f", "qd", "id"]
+             "u", "q", "p", "nr", "b", "ca", "f", "ni", "nat_ratio", "ng", "qd", "id"]
     ikeys = ["n", "s", "tier", "id", "c", "g", "r", "im", "ck", "ctr", "cpc", "cvr", "o",
-             "u", "q", "p", "nr", "b", "ca", "f"]
+             "u", "q", "p", "nr", "b", "ca", "f", "ni", "nat_ratio", "ng"]
 
     plan_cols = [
         {"k": "qd", "t": "象限"}, {"k": "n", "t": "计划名称"}, {"k": "s", "t": "场景"},
@@ -940,6 +979,11 @@ def build(plans, items, args):
         {"k": "q", "t": "潜客数", "m": "num"}, {"k": "ca", "t": "加购", "m": "num"},
         {"k": "f", "t": "收藏", "m": "num"},
     ]
+    if has_nat:
+        plan_cols += [
+            {"k": "ni", "t": "自然曝光", "m": "num"},
+            {"k": "nat_ratio", "t": "自然溢出", "m": "pct"},
+        ]
     item_cols = [
         {"k": "tier", "t": "分层"}, {"k": "id", "t": "商品ID"}, {"k": "n", "t": "商品名称"},
         {"k": "c", "t": "花费", "m": "money"}, {"k": "g", "t": "成交金额", "m": "money"},
@@ -950,6 +994,11 @@ def build(plans, items, args):
         {"k": "u", "t": "访问人数", "m": "num"}, {"k": "ca", "t": "加购", "m": "num"},
         {"k": "f", "t": "收藏", "m": "num"},
     ]
+    if has_nat:
+        item_cols += [
+            {"k": "ni", "t": "自然曝光", "m": "num"},
+            {"k": "nat_ratio", "t": "自然溢出", "m": "pct"},
+        ]
 
     period = args.period or ""
     src = []
@@ -967,6 +1016,8 @@ def build(plans, items, args):
     return {
         "plans": plans, "items": items, "quad_stats": st, "acct": acct,
         "roi_thr": roi_thr, "sp_thr": sp_thr,
+        "has_nat": has_nat, "be_roi": be_roi, "be_applied": be_applied,
+        "base_thr": base_thr,
         "min_cost": args.min_cost, "min_uv": args.min_uv,
         "sim_html": sim_html, "tier_stats": tier_stats,
         "qz_info": qz_info, "top_items": top_items, "top_n": args.top_n,
@@ -996,6 +1047,9 @@ def main():
     ap.add_argument("--period", default="", help="统计周期文案，如 09-21至09-27")
     ap.add_argument("--roi-thr", type=float, default=0, help="ROI 分界线，默认取大盘 ROI")
     ap.add_argument("--sp-thr", type=float, default=None, help="潜客占比分界线，默认取大盘值")
+    ap.add_argument("--margin", type=float, default=0,
+                    help="店铺整体毛利率(0-1)，用于计算保本ROI=1/毛利率；"
+                         "ROI 分界线取 max(保本ROI, 大盘ROI)。不填则沿用大盘线。")
     ap.add_argument("--cost-thr", type=float, default=0, help="商品规模分界花费，默认取 70 分位")
     ap.add_argument("--min-cost", type=float, default=300.0, help="样本不足：花费下限，默认 300")
     ap.add_argument("--min-uv", type=float, default=200.0, help="样本不足：访问人数下限，默认 200")

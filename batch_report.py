@@ -63,6 +63,8 @@ def main():
     ap.add_argument("--outdir", default="", help="输出目录，默认为 --dir 下的 reports/")
     ap.add_argument("--roi-thr", type=float, default=0, help="ROI 分界线，默认取大盘")
     ap.add_argument("--sp-thr", type=float, default=None, help="潜客占比分界线，默认取大盘")
+    ap.add_argument("--margin", type=float, default=0,
+                    help="店铺整体毛利率(0-1)；ROI 分界线取 max(保本ROI=1/毛利率, 大盘ROI)")
     ap.add_argument("--min-cost", type=float, default=300.0)
     ap.add_argument("--min-uv", type=float, default=200.0)
     ap.add_argument("--top-n", type=int, default=10)
@@ -143,7 +145,7 @@ def main():
             sub = argparse.Namespace(
                 roi_thr=args.roi_thr, sp_thr=args.sp_thr, cost_thr=0,
                 min_cost=args.min_cost, min_uv=args.min_uv,
-                period=args.period, top_n=args.top_n,
+                period=args.period, top_n=args.top_n, margin=args.margin,
                 plans=pf, items=itf,
             )
             try:
