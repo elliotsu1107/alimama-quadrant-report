@@ -67,6 +67,8 @@ def main():
     ap.add_argument("--min-uv", type=float, default=200.0)
     ap.add_argument("--top-n", type=int, default=10)
     ap.add_argument("--suffix", default="", help="报告文件名后缀，如 周报 / 日报")
+    ap.add_argument("--shop", default="",
+                    help="自定义店铺名（仅单一店铺时生效，默认从文件名自动识别）")
     args = ap.parse_args()
 
     # 收集报表：--paths 支持文件/目录混用（拖多个文件或整个文件夹都行），--dir 兼容旧用法
@@ -112,6 +114,14 @@ def main():
     for i, s in enumerate(shops, 1):
         renamed[s] = s if s else "店铺%d" % i
 
+    # 用户自定义店铺名：只对「单一店铺」生效，避免多店铺时张冠李戴
+    if getattr(args, "shop", ""):
+        if len(shops) == 1:
+            renamed[shops[0]] = args.shop.strip()
+        else:
+            print("检测到 %d 个店铺，--shop 仅对单一店铺生效，已忽略（继续按文件名识别）"
+                  % len(shops))
+
     print("=" * 60)
     print("批量生成 ｜ 共 %d 个店铺 ｜ 输出：%s" % (len(shops), out_dir))
     print("=" * 60)
@@ -154,7 +164,7 @@ def main():
                         f.write("  %s %d个 花费%s(%.1f%%) ROI %.2f\n"
                                 % (wr.QUADS[k]["n"], v["n"], wr.fmt_money(v["c"]),
                                    v["c"] / a["c"] * 100 if a["c"] else 0, v["roi"]))
-                    f.write("测算 ROI：基准 %.2f → 关停建议删除 %.2f → 再压降人群矫正 %.2f\n"
+                    f.write("测算 ROI：基准 %.2f → 停投建议调整 %.2f → 再压降人群矫正 %.2f\n"
                             % (a["roi"], ctx["sim_roi"][0], ctx["sim_roi"][1]))
                 ok += 1
                 summaries.append((shop_label, a, ctx))
@@ -171,7 +181,7 @@ def main():
         print("\n各店铺一览（按花费降序）：")
         for label, a, ctx in sorted(summaries, key=lambda x: -x[1]["c"]):
             q4 = ctx["quad_stats"][4]
-            print("  %-16s 花费 %9s ｜ ROI %5.2f ｜ 待删 %2d个(占花费%4.1f%%) ｜ 全站占比 %4.1f%%"
+            print("  %-16s 花费 %9s ｜ ROI %5.2f ｜ 待调 %2d个(占花费%4.1f%%) ｜ 全站占比 %4.1f%%"
                   % (label, wr.fmt_money(a["c"]), a["roi"], q4["n"],
                      q4["c"] / a["c"] * 100 if a["c"] else 0,
                      ctx["qz_info"]["share"] * 100))

@@ -20,7 +20,7 @@ except Exception:
 HERE = os.path.dirname(os.path.abspath(__file__))
 EXTS = (".csv", ".xlsx", ".xls")
 
-VERSION = "0.1.0"
+VERSION = "0.1.1"
 
 _spec = importlib.util.spec_from_file_location("br", os.path.join(HERE, "batch_report.py"))
 br = importlib.util.module_from_spec(_spec)
@@ -82,6 +82,12 @@ def pick_period():
     return clean(ask("  周期 > "))
 
 
+def pick_shop():
+    print("\n店铺名称写进报告标题？（直接回车 = 按文件名自动识别，如「九阳旗舰店_计划_…」→ 九阳旗舰店）")
+    print("多个店铺混在一起时请留空，脚本会逐个自动识别。")
+    return clean(ask("  店铺名称 > "))
+
+
 def pick_tag(period):
     print("\n报告类型：[1] 周报  [2] 日报（直接回车按周期自动判断）")
     s = clean(ask("  选择 > "))
@@ -109,6 +115,7 @@ def main():
         return 1
 
     period = pick_period()
+    shop = pick_shop()
     tag = pick_tag(period)
 
     # 输出目录：第一个来源是文件夹就用它，否则用文件所在目录
@@ -117,7 +124,9 @@ def main():
     out_dir = os.path.join(base, "reports")
 
     print("\n" + "-" * 58)
-    print("来源 %d 个 ｜ 周期「%s」｜ 类型 %s" % (len(paths), period or "(未填)", tag))
+    print("来源 %d 个 ｜ 周期「%s」｜ 类型 %s%s"
+          % (len(paths), period or "(未填)", tag,
+             " ｜ 店铺「%s」" % shop if shop else ""))
     print("输出目录：%s" % out_dir)
     print("-" * 58)
     print("\n正在生成报告，请稍候…\n")
@@ -125,6 +134,8 @@ def main():
     old_argv = sys.argv
     sys.argv = ["batch_report.py", "--paths"] + paths + \
                ["--period", period, "--outdir", out_dir, "--suffix", tag]
+    if shop:
+        sys.argv += ["--shop", shop]
     try:
         rc = br.main()
     except SystemExit as e:

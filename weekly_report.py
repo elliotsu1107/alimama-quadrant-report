@@ -45,8 +45,8 @@ QUADS = {
         "act": "存量收割型 → 控制花费占比 ≤30%", "short": "控比≤30%"},
     3: {"n": "人群矫正", "c": "#8b5cf6", "cond": "低 ROI ＋ 高潜客占比",
         "act": "拉新强转化弱 → 矫正人群精准度", "short": "修定向"},
-    4: {"n": "建议删除", "c": "#e5484d", "cond": "低 ROI ＋ 低潜客占比",
-        "act": "无拉新无转化 → 删除关停", "short": "关停"},
+    4: {"n": "建议调整", "c": "#e5484d", "cond": "低 ROI ＋ 低潜客占比",
+        "act": "效率偏低 → 优先调整优化，确认无效再停投", "short": "调整"},
     0: {"n": "样本不足", "c": "#9ca3af", "cond": "花费或访问人数过低",
         "act": "暂不判定，先补量或合并计划", "short": "观察"},
 }
@@ -181,7 +181,15 @@ def svg_scatter(rows, roi_thr, sp_thr, W=1080, H=460):
         return ""
     xmax = xs[int(len(xs) * 0.97)] * 1.15
     xmax = max(xmax, roi_thr * 1.4)
-    ymax = 1.0
+    # 纵轴自适应：按实际潜客占比的分布范围确定显示区间，避免散点全部挤在上部
+    yv = [r["p"] for r in rows if r["p"]] + [sp_thr]
+    lo, hi = min(yv), max(yv)
+    ypad = max(0.06, (hi - lo) * 0.15)
+    ymin = max(0.0, lo - ypad)
+    ymax = min(1.0, hi + ypad)
+    if ymax - ymin < 0.12:                       # 分布过度集中时保底留白
+        mid = (ymax + ymin) / 2
+        ymin, ymax = max(0.0, mid - 0.06), min(1.0, mid + 0.06)
     cmax = max(r["c"] for r in rows) or 1
 
     ml, mr, mt, mb = 66, 24, 24, 48
@@ -191,7 +199,8 @@ def svg_scatter(rows, roi_thr, sp_thr, W=1080, H=460):
         return ml + (min(v, xmax) / xmax) * pw
 
     def Y(v):
-        return mt + ph - (min(max(v, 0), ymax) / ymax) * ph
+        vv = min(max(v, ymin), ymax)
+        return mt + ph - ((vv - ymin) / (ymax - ymin)) * ph
 
     p = ['<svg viewBox="0 0 %d %d" width="100%%" style="max-width:1080px" id="scatter">'
          % (W, H)]
@@ -201,12 +210,13 @@ def svg_scatter(rows, roi_thr, sp_thr, W=1080, H=460):
              % (X(roi_thr), mt, ml + pw - X(roi_thr), Y(sp_thr) - mt))
     p.append('<rect x="%.1f" y="%.1f" width="%.1f" height="%.1f" fill="#e5484d" opacity="0.05"/>'
              % (ml, Y(sp_thr), X(roi_thr) - ml, mt + ph - Y(sp_thr)))
-    # 网格
+    # 网格（纵轴刻度随自适应区间变化）
     for i in range(5):
         y = mt + ph * i / 4
+        val = ymax - (ymax - ymin) * i / 4
         p.append('<line x1="%d" y1="%.1f" x2="%.1f" y2="%.1f" stroke="#eef1f5"/>' % (ml, y, ml + pw, y))
         p.append('<text x="%d" y="%.1f" font-size="11" fill="#94a3b8" text-anchor="end">%.0f%%</text>'
-                 % (ml - 8, y + 4, (1 - i / 4) * 100))
+                 % (ml - 8, y + 4, val * 100))
     for i in range(6):
         x = ml + pw * i / 5
         p.append('<text x="%.1f" y="%.1f" font-size="11" fill="#94a3b8" text-anchor="middle">%.1f</text>'
@@ -623,6 +633,66 @@ def render(ctx, out_path):
              % (ctx["qz_info"]["roi"], fmt_money(ctx["qz_info"]["g"]), acct["roi"]))
     h.append("</div>")
 
+    # 店铺花费 TOP N 商品（店铺整体一览：紧跟大盘，放在四象限分布之前）
+    if ctx["top_items"]:
+        h.append('<h2 id="top-items">店铺花费 TOP%d 商品 · 推广效果</h2>' % ctx["top_n"])
+        h.append('<div class="card">')
+        h.append('<div class="note" style="margin:0 0 10px">数据直接取自商品级报表，按花费降序；'
+                 '「分层」按 ROI × 花费 划分：爆款=高ROI高花费、潜力=高ROI低花费、'
+                 '问题=低ROI高花费、长尾=低ROI低花费。</div>')
+        h.append('<div style="overflow:auto"><table><thead><tr>'
+                 '<th>#</th><th>商品ID</th><th>商品名称</th><th>分层</th>'
+                 '<th>花费</th><th>占店铺花费</th>'
+                 '<th>成交金额</th><th>ROI</th><th>潜客占比</th><th>新客占比</th>'
+                 '<th>展现</th><th>点击</th><th>CTR</th><th>CPC</th><th>CVR</th>'
+                 '<th>成交笔数</th><th>加购</th><th>收藏</th>'
+                 '</tr></thead><tbody>')
+        for t in ctx["top_items"]:
+            nm = t["name"] if len(t["name"]) <= 26 else t["name"][:25] + "…"
+            tc_ = TIERS.get(t["tier"], {"c": "#9ca3af"})["c"]
+            rcls = "good" if t["tier"] in ("爆款", "潜力") else "bad"
+            h.append('<tr>'
+                     '<td>%d</td><td class="nm" style="color:#475569">%s</td>'
+                     '<td class="nm" title="%s">%s</td>'
+                     '<td><span class="qtag" style="background:%s">%s</span></td>'
+                     '<td>¥%s</td><td>%.1f%%</td><td>¥%s</td>'
+                     '<td class="%s"><b>%.2f</b></td><td>%.1f%%</td><td>%.1f%%</td>'
+                     '<td>%s</td><td>%s</td><td>%.2f%%</td><td>%.2f</td><td>%.2f%%</td>'
+                     '<td>%s</td><td>%s</td><td>%s</td></tr>'
+                     % (t["rank"], esc(t["id"] or "—"),
+                        esc(t["name"]), esc(nm), tc_, t["tier"] or "—",
+                        fmt_money(t["c"]), t["share"] * 100, fmt_money(t["g"]),
+                        rcls, t["r"], t["p"] * 100, t["nr"] * 100,
+                        fmt_money(t["im"]), fmt_money(t["ck"]),
+                        t["ctr"] * 100, t["cpc"], t["cvr"] * 100,
+                        fmt_money(t["o"]), fmt_money(t["ca"]), fmt_money(t["f"])))
+        h.append('</tbody></table></div>')
+        h.append('<div class="note">花费占比 = 该商品花费 ÷ 商品级报表总花费；'
+                 'ROI 标红表示该商品低于大盘分界线。</div>')
+        h.append("</div>")
+
+    # 商品结构与分层（店铺整体一览）
+    if items:
+        h.append('<h2 id="item-table">商品结构与分层</h2>')
+        h.append('<div class="qcards">')
+        for t, d in ctx["tier_stats"].items():
+            h.append('<div class="qcard tcard" data-t="%s" style="border-top-color:%s">'
+                     '<div class="t"><span class="dot" style="background:%s"></span>%s</div>'
+                     '<div class="c">%s</div>'
+                     '<div class="m"><b>%d</b> 个商品 · 花费 <b>¥%s</b></div>'
+                     '<div class="m">占预算 %.1f%% ｜ ROI %.2f</div>'
+                     '<div class="a">%s</div></div>'
+                     % (t, d["c_color"], d["c_color"], t, d["cond"], d["n"],
+                        fmt_money(d["cost"]), d["cost_share"] * 100, d["roi"], d["act"]))
+        h.append("</div>")
+        h.append('<div class="card" style="margin-top:14px"><div class="bar">'
+                 '<input id="ikw" placeholder="搜索商品名称 / 商品ID…" style="min-width:220px">'
+                 '<select id="iss"><option value="__all__">全部分层</option></select>'
+                 '<button class="btn" id="icsv">导出 CSV</button>'
+                 '<span id="icnt" style="color:#64748b;font-size:12.5px"></span></div>'
+                 '<div style="max-height:620px;overflow:auto"><table id="itb"></table></div>'
+                 '<div class="pg" id="ipg"></div></div>')
+
     # 四象限卡片
     h.append("<h2>四象限分布（点击卡片可筛选下方明细）</h2>")
     h.append('<div class="qcards">')
@@ -670,46 +740,8 @@ def render(ctx, out_path):
     # 优化测算
     h.append("<h2>预算调整测算</h2>")
     h.append('<div class="sim">%s</div>' % ctx["sim_html"])
-    h.append('<div class="note">测算为静态推算：假设被关停计划的成交全部流失（未计入自然流量承接与'
+    h.append('<div class="note">测算为静态推算：假设被停投计划的成交全部流失（未计入自然流量承接与'
              '预算转移带来的增量），实际结果通常好于此测算。仅用于判断调整方向，不作为承诺值。</div>')
-
-    # 店铺花费 TOP N 商品
-    if ctx["top_items"]:
-        h.append('<h2 id="top-items">店铺花费 TOP%d 商品 · 推广效果</h2>' % ctx["top_n"])
-        h.append('<div class="card">')
-        h.append('<div class="note" style="margin:0 0 10px">数据直接取自商品级报表，按花费降序；'
-                 '「分层」按 ROI × 花费 划分：爆款=高ROI高花费、潜力=高ROI低花费、'
-                 '问题=低ROI高花费、长尾=低ROI低花费。</div>')
-        h.append('<div style="overflow:auto"><table><thead><tr>'
-                 '<th>#</th><th>商品ID</th><th>商品名称</th><th>分层</th>'
-                 '<th>花费</th><th>占店铺花费</th>'
-                 '<th>成交金额</th><th>ROI</th><th>潜客占比</th><th>新客占比</th>'
-                 '<th>展现</th><th>点击</th><th>CTR</th><th>CPC</th><th>CVR</th>'
-                 '<th>成交笔数</th><th>加购</th><th>收藏</th>'
-                 '</tr></thead><tbody>')
-        for t in ctx["top_items"]:
-            nm = t["name"] if len(t["name"]) <= 26 else t["name"][:25] + "…"
-            tc_ = TIERS.get(t["tier"], {"c": "#9ca3af"})["c"]
-            rcls = "good" if t["tier"] in ("爆款", "潜力") else "bad"
-            h.append('<tr>'
-                     '<td>%d</td><td class="nm" style="color:#475569">%s</td>'
-                     '<td class="nm" title="%s">%s</td>'
-                     '<td><span class="qtag" style="background:%s">%s</span></td>'
-                     '<td>¥%s</td><td>%.1f%%</td><td>¥%s</td>'
-                     '<td class="%s"><b>%.2f</b></td><td>%.1f%%</td><td>%.1f%%</td>'
-                     '<td>%s</td><td>%s</td><td>%.2f%%</td><td>%.2f</td><td>%.2f%%</td>'
-                     '<td>%s</td><td>%s</td><td>%s</td></tr>'
-                     % (t["rank"], esc(t["id"] or "—"),
-                        esc(t["name"]), esc(nm), tc_, t["tier"] or "—",
-                        fmt_money(t["c"]), t["share"] * 100, fmt_money(t["g"]),
-                        rcls, t["r"], t["p"] * 100, t["nr"] * 100,
-                        fmt_money(t["im"]), fmt_money(t["ck"]),
-                        t["ctr"] * 100, t["cpc"], t["cvr"] * 100,
-                        fmt_money(t["o"]), fmt_money(t["ca"]), fmt_money(t["f"])))
-        h.append('</tbody></table></div>')
-        h.append('<div class="note">花费占比 = 该商品花费 ÷ 商品级报表总花费；'
-                 'ROI 标红表示该商品低于大盘分界线。</div>')
-        h.append("</div>")
 
     # 计划明细
     h.append('<h2 id="plan-table">计划明细与处置建议</h2>')
@@ -732,28 +764,6 @@ def render(ctx, out_path):
              '<span id="pcnt" style="color:#64748b;font-size:12.5px"></span></div>'
              '<div style="max-height:620px;overflow:auto"><table id="ptb"></table></div>'
              '<div class="pg" id="ppg"></div></div>')
-
-    # 商品
-    if items:
-        h.append('<h2 id="item-table">商品结构与分层</h2>')
-        h.append('<div class="qcards">')
-        for t, d in ctx["tier_stats"].items():
-            h.append('<div class="qcard tcard" data-t="%s" style="border-top-color:%s">'
-                     '<div class="t"><span class="dot" style="background:%s"></span>%s</div>'
-                     '<div class="c">%s</div>'
-                     '<div class="m"><b>%d</b> 个商品 · 花费 <b>¥%s</b></div>'
-                     '<div class="m">占预算 %.1f%% ｜ ROI %.2f</div>'
-                     '<div class="a">%s</div></div>'
-                     % (t, d["c_color"], d["c_color"], t, d["cond"], d["n"],
-                        fmt_money(d["cost"]), d["cost_share"] * 100, d["roi"], d["act"]))
-        h.append("</div>")
-        h.append('<div class="card" style="margin-top:14px"><div class="bar">'
-                 '<input id="ikw" placeholder="搜索商品名称 / 商品ID…" style="min-width:220px">'
-                 '<select id="iss"><option value="__all__">全部分层</option></select>'
-                 '<button class="btn" id="icsv">导出 CSV</button>'
-                 '<span id="icnt" style="color:#64748b;font-size:12.5px"></span></div>'
-                 '<div style="max-height:620px;overflow:auto"><table id="itb"></table></div>'
-                 '<div class="pg" id="ipg"></div></div>')
 
     h.append('<div class="note" style="text-align:center;margin-top:36px">'
              '本文件为单文件离线报告，无外部依赖，可直接发送给同事；'
@@ -852,9 +862,9 @@ def build(plans, items, args):
 
     sim_html = (
         sim("① 当前基准", base, tg, tc, "不做任何调整")
-        + sim("② 关停「建议删除」", s1, g1, tc - c4,
-              "砍掉 %d 个计划、¥%s 花费" % (st[4]["n"], fmt_money(c4)))
-        + sim("③ 关停 + 「人群矫正」减半", s2, g2, c2,
+        + sim("② 停投「建议调整」", s1, g1, tc - c4,
+              "停掉 %d 个计划、¥%s 花费" % (st[4]["n"], fmt_money(c4)))
+        + sim("③ 停投 + 「人群矫正」减半", s2, g2, c2,
               "再把 %d 个「人群矫正」计划预算压一半" % st[3]["n"])
     )
     sim_html += (
@@ -1027,10 +1037,10 @@ def main():
                     v["c"] / a["c"] * 100 if a["c"] else 0,
                     fmt_money(v["g"]), v["g"] / a["g"] * 100 if a["g"] else 0, v["roi"]))
     L.append("")
-    # 待处理计划：建议删除 + 人群矫正里花钱最多的
+    # 待处理计划：建议调整 + 人群矫正里花钱最多的
     bad = sorted([r for r in plans if r["qd"] in (4, 3)], key=lambda z: -z["c"])[:8]
     if bad:
-        L.append("【优先处理计划】消耗最高的 8 个（象限=4建议删除 / 3人群矫正）")
+        L.append("【优先处理计划】消耗最高的 8 个（象限=4建议调整 / 3人群矫正）")
         for r in bad:
             L.append("  [Q%d] %-32s 花费 %8s · ROI %5.2f · 潜客 %5.1f%% · %s"
                      % (r["qd"], r["n"][:32], fmt_money(r["c"]), r["r"],
@@ -1043,7 +1053,7 @@ def main():
                      % (t["rank"], t["name"][:28], t["id"] or "—", fmt_money(t["c"]),
                         t["share"] * 100, t["r"], t["tier"]))
         L.append("")
-    L.append("【测算】基准 ROI %.2f ｜ 关停建议删除 → %.2f ｜ 再压降人群矫正一半 → %.2f"
+    L.append("【测算】基准 ROI %.2f ｜ 停投建议调整 → %.2f ｜ 再压降人群矫正一半 → %.2f"
              % (a["roi"], ctx["sim_roi"][0], ctx["sim_roi"][1]))
     L.append("=" * 60)
 
