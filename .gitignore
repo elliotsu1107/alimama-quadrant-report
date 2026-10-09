@@ -11,6 +11,7 @@ venv/
 reports/
 outputs/
 data/
+dist/
 *.html
 !docs/**/*.html
 
